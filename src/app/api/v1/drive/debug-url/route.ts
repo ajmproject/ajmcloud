@@ -8,15 +8,22 @@ export async function GET() {
     const redirectUri = process.env.GOOGLE_REDIRECT_URI || '';
     const authUrl = generateAuthUrl('test_state_123');
 
+    const sKey = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+    const aKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
+    const sUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
+
     return NextResponse.json({
+      supabaseUrl: sUrl,
+      serviceRoleKeyLength: sKey.length,
+      serviceRoleKeyPrefix: sKey.slice(0, 10),
+      serviceRoleKeySuffix: sKey.slice(-5),
+      serviceRoleKeyHasWhitespace: /\s/.test(sKey),
+      anonKeyLength: aKey.length,
+      anonKeyPrefix: aKey.slice(0, 10),
       clientIdLength: clientId.length,
       clientIdHasWhitespace: /\s/.test(clientId),
-      clientIdHasQuotes: clientId.startsWith('"') || clientId.startsWith("'"),
       clientSecretLength: clientSecret.length,
-      clientSecretHasWhitespace: /\s/.test(clientSecret),
       redirectUri,
-      redirectUriHasWhitespace: /\s/.test(redirectUri),
-      redirectUriHasQuotes: redirectUri.startsWith('"') || redirectUri.startsWith("'"),
       authUrl,
     });
   } catch (err: any) {
