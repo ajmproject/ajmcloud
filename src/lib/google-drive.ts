@@ -8,10 +8,15 @@ export const GOOGLE_DRIVE_SCOPES = [
   'https://www.googleapis.com/auth/userinfo.email',
 ];
 
+function cleanEnvVal(val?: string): string {
+  if (!val) return '';
+  return val.trim().replace(/^["']|["']$/g, '');
+}
+
 export function getOAuth2Client() {
-  const clientId = process.env.GOOGLE_CLIENT_ID;
-  const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
-  const redirectUri = process.env.GOOGLE_REDIRECT_URI;
+  const clientId = cleanEnvVal(process.env.GOOGLE_CLIENT_ID);
+  const clientSecret = cleanEnvVal(process.env.GOOGLE_CLIENT_SECRET);
+  const redirectUri = cleanEnvVal(process.env.GOOGLE_REDIRECT_URI);
 
   if (!clientId || !clientSecret || !redirectUri) {
     throw new Error('Google OAuth configuration is missing in environment variables.');
