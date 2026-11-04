@@ -52,11 +52,11 @@ export async function POST(request: NextRequest) {
       .from('upload_jobs')
       .insert({
         user_id: auth.userId,
-        google_drive_account_id: targetAccount.id,
+        drive_account_id: targetAccount.id,
         file_name: fileName,
         mime_type: mimeType,
         size_bytes: sizeBytes,
-        resumable_session_uri: resumableSessionUri,
+        resumable_session_url: resumableSessionUri,
         status: 'uploading',
       })
       .select('id')

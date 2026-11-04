@@ -47,7 +47,7 @@ export async function POST(request: NextRequest) {
     }
 
     // 2. Fetch fresh token for the target drive account
-    const accessToken = await getValidAccessToken(job.google_drive_account_id);
+    const accessToken = await getValidAccessToken(job.drive_account_id);
 
     // 3. Verify file exists directly on Google Drive API
     const oauth2Client = new google.auth.OAuth2();
@@ -74,7 +74,7 @@ export async function POST(request: NextRequest) {
       .from('files')
       .insert({
         user_id: auth.userId,
-        drive_account_id: job.google_drive_account_id,
+        drive_account_id: job.drive_account_id,
         google_drive_file_id: gFile.id,
         name: fileName,
         mime_type: job.mime_type,
@@ -107,7 +107,7 @@ export async function POST(request: NextRequest) {
     const { data: accountData } = await supabaseAdmin
       .from('google_drive_accounts')
       .select('storage_used_bytes')
-      .eq('id', job.google_drive_account_id)
+      .eq('id', job.drive_account_id)
       .single();
 
     if (accountData) {
@@ -118,7 +118,7 @@ export async function POST(request: NextRequest) {
           storage_used_bytes: currentUsed + finalSize,
           updated_at: new Date().toISOString(),
         })
-        .eq('id', job.google_drive_account_id);
+        .eq('id', job.drive_account_id);
     }
 
     return NextResponse.json<ApiResponse>({

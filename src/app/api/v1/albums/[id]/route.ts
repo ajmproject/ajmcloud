@@ -16,6 +16,7 @@ export async function GET(
       let category = 'photo';
       if (id === 'smart-videos') category = 'video';
       if (id === 'smart-docs') category = 'document';
+      if (id === 'smart-archives') category = 'archive';
 
       let query = supabaseAdmin
         .from('files')
@@ -33,12 +34,20 @@ export async function GET(
       const { data: files, error } = await query;
       if (error) throw new Error(error.message);
 
+      const titleMap: Record<string, string> = {
+        'smart-photos': 'Semua Foto',
+        'smart-videos': 'Koleksi Video',
+        'smart-favorites': 'Favorit',
+        'smart-docs': 'Dokumen',
+        'smart-archives': 'Arsip & Berkas',
+      };
+
       return NextResponse.json<ApiResponse>({
         success: true,
         data: {
           album: {
             id,
-            title: id === 'smart-photos' ? 'Semua Foto' : id === 'smart-videos' ? 'Koleksi Video' : id === 'smart-favorites' ? 'Favorit' : 'Dokumen',
+            title: titleMap[id] || 'Album Pintar',
             isSmart: true,
           },
           files: files || [],

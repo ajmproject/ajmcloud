@@ -76,14 +76,14 @@ export async function selectDriveAccountForUpload(
   // 2. Fetch pending upload reservations to prevent race conditions on quota
   const { data: pendingJobs } = await supabaseAdmin
     .from('upload_jobs')
-    .select('google_drive_account_id, size_bytes')
+    .select('drive_account_id, size_bytes')
     .eq('user_id', userId)
     .in('status', ['pending', 'uploading', 'verifying']);
 
   const reservedSpaceByAccount = new Map<string, number>();
   (pendingJobs || []).forEach((job) => {
-    const current = reservedSpaceByAccount.get(job.google_drive_account_id) || 0;
-    reservedSpaceByAccount.set(job.google_drive_account_id, current + Number(job.size_bytes));
+    const current = reservedSpaceByAccount.get(job.drive_account_id) || 0;
+    reservedSpaceByAccount.set(job.drive_account_id, current + Number(job.size_bytes));
   });
 
   // 3. Find candidates with sufficient space

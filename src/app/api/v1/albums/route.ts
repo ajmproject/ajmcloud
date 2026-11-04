@@ -67,7 +67,7 @@ export async function GET(request: NextRequest) {
     // 3. Generate Smart Albums from user's real files in Google Drive
     const { data: photos, count: photoCount } = await supabaseAdmin
       .from('files')
-      .select('id, thumbnail_url, view_url, created_at')
+      .select('id, thumbnail_url, view_url, created_at', { count: 'exact' })
       .eq('user_id', auth.userId)
       .eq('category', 'photo')
       .eq('is_trashed', false)
@@ -76,7 +76,7 @@ export async function GET(request: NextRequest) {
 
     const { data: videos, count: videoCount } = await supabaseAdmin
       .from('files')
-      .select('id, thumbnail_url, view_url, created_at')
+      .select('id, thumbnail_url, view_url, created_at', { count: 'exact' })
       .eq('user_id', auth.userId)
       .eq('category', 'video')
       .eq('is_trashed', false)
@@ -85,16 +85,25 @@ export async function GET(request: NextRequest) {
 
     const { data: documents, count: docCount } = await supabaseAdmin
       .from('files')
-      .select('id, thumbnail_url, view_url, created_at')
+      .select('id, thumbnail_url, view_url, created_at', { count: 'exact' })
       .eq('user_id', auth.userId)
       .eq('category', 'document')
       .eq('is_trashed', false)
       .order('created_at', { ascending: false })
       .limit(1);
 
+    const { data: archives, count: arcCount } = await supabaseAdmin
+      .from('files')
+      .select('id, thumbnail_url, view_url, created_at', { count: 'exact' })
+      .eq('user_id', auth.userId)
+      .eq('category', 'archive')
+      .eq('is_trashed', false)
+      .order('created_at', { ascending: false })
+      .limit(1);
+
     const { data: favorites, count: favCount } = await supabaseAdmin
       .from('files')
-      .select('id, thumbnail_url, view_url, created_at')
+      .select('id, thumbnail_url, view_url, created_at', { count: 'exact' })
       .eq('user_id', auth.userId)
       .eq('is_favorite', true)
       .eq('is_trashed', false)
@@ -103,6 +112,7 @@ export async function GET(request: NextRequest) {
 
     const smartAlbums = [];
 
+    // Tampilkan smart albums yang memiliki file
     if ((photoCount || 0) > 0) {
       smartAlbums.push({
         id: 'smart-photos',
@@ -127,18 +137,6 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    if ((favCount || 0) > 0) {
-      smartAlbums.push({
-        id: 'smart-favorites',
-        title: 'Favorit',
-        description: 'File yang Anda tandai sebagai favorit',
-        itemCount: favCount || 0,
-        coverUrl: favorites?.[0]?.thumbnail_url || favorites?.[0]?.view_url || null,
-        isSmart: true,
-        type: 'favorite',
-      });
-    }
-
     if ((docCount || 0) > 0) {
       smartAlbums.push({
         id: 'smart-docs',
@@ -148,6 +146,30 @@ export async function GET(request: NextRequest) {
         coverUrl: documents?.[0]?.thumbnail_url || null,
         isSmart: true,
         type: 'document',
+      });
+    }
+
+    if ((arcCount || 0) > 0) {
+      smartAlbums.push({
+        id: 'smart-archives',
+        title: 'Arsip & Berkas',
+        description: 'File ZIP, RAR, dan berkas arsip',
+        itemCount: arcCount || 0,
+        coverUrl: archives?.[0]?.thumbnail_url || null,
+        isSmart: true,
+        type: 'archive',
+      });
+    }
+
+    if ((favCount || 0) > 0) {
+      smartAlbums.push({
+        id: 'smart-favorites',
+        title: 'Favorit',
+        description: 'File yang Anda tandai sebagai favorit',
+        itemCount: favCount || 0,
+        coverUrl: favorites?.[0]?.thumbnail_url || favorites?.[0]?.view_url || null,
+        isSmart: true,
+        type: 'favorite',
       });
     }
 

@@ -51,11 +51,11 @@ export interface CloudFile {
 export interface UploadJob {
   id: string;
   user_id: string;
-  google_drive_account_id: string;
+  drive_account_id: string;
   file_name: string;
   mime_type: string;
   size_bytes: number;
-  resumable_session_uri: string | null;
+  resumable_session_url: string | null;
   status: UploadStatus;
   bytes_uploaded: number;
   error_message: string | null;
