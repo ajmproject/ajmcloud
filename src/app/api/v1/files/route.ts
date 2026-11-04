@@ -29,7 +29,7 @@ export async function GET(request: NextRequest) {
     }
 
     if (isStarred === 'true') {
-      query = query.eq('is_starred', true);
+      query = query.eq('is_favorite', true);
     }
 
     if (search) {

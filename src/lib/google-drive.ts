@@ -181,7 +181,7 @@ export async function createGoogleResumableSession(
 
 /**
  * Synchronizes files from the user's Google Drive account into AjmCloud's files table.
- * Also synchronizes current storage quota (total and used bytes).
+ * Highly optimized with parallel requests, pageSize: 250, and single-pass ID deduplication.
  */
 export async function syncGoogleDriveFiles(
   driveAccountId: string,
@@ -192,11 +192,31 @@ export async function syncGoogleDriveFiles(
   oauth2Client.setCredentials({ access_token: accessToken });
   const drive = google.drive({ version: 'v3', auth: oauth2Client });
 
-  // 1. Sync storage quota
+  let totalSynced = 0;
+
   try {
-    const aboutRes = await drive.about.get({ fields: 'storageQuota' });
-    const quota = aboutRes.data.storageQuota;
-    if (quota) {
+    // Jalankan pengambilan Quota, File List pertama (250 file), dan ID yang sudah ada secara PARALEL
+    const [aboutRes, listRes, existingRes] = await Promise.all([
+      drive.about.get({ fields: 'storageQuota' }).catch((err) => {
+        console.warn('Failed to fetch storageQuota:', err?.message);
+        return null;
+      }),
+      drive.files.list({
+        pageSize: 250,
+        fields:
+          'nextPageToken, files(id, name, mimeType, size, createdTime, modifiedTime, thumbnailLink, webViewLink, webContentLink)',
+        q: "trashed = false and mimeType != 'application/vnd.google-apps.folder'",
+        orderBy: 'createdTime desc',
+      }),
+      supabaseAdmin
+        .from('files')
+        .select('google_drive_file_id')
+        .eq('drive_account_id', driveAccountId),
+    ]);
+
+    // 1. Update kuota akun ke database
+    if (aboutRes?.data?.storageQuota) {
+      const quota = aboutRes.data.storageQuota;
       const total = quota.limit ? Number(quota.limit) : 16106127360; // 15 GB default
       const used = quota.usage ? Number(quota.usage) : 0;
       await supabaseAdmin
@@ -208,44 +228,24 @@ export async function syncGoogleDriveFiles(
         })
         .eq('id', driveAccountId);
     }
-  } catch (quotaErr) {
-    console.warn('Failed to fetch Google Drive storage quota:', quotaErr);
-  }
 
-  // 2. Fetch non-trashed, non-folder files
-  let pageToken: string | undefined = undefined;
-  let totalSynced = 0;
+    // 2. Set ID file yang sudah ada di database untuk O(1) deduplication
+    const existingIdSet = new Set(
+      (existingRes?.data || []).map((f) => f.google_drive_file_id)
+    );
 
-  try {
-    do {
-      const response: any = await drive.files.list({
-        pageSize: 100,
-        pageToken,
-        fields:
-          'nextPageToken, files(id, name, mimeType, size, createdTime, modifiedTime, thumbnailLink, webViewLink, webContentLink, iconLink)',
-        q: "trashed = false and mimeType != 'application/vnd.google-apps.folder'",
-        orderBy: 'createdTime desc',
-      });
+    let currentList = listRes?.data?.files || [];
+    let pageToken = listRes?.data?.nextPageToken || undefined;
 
-      const gFiles: any[] = response.data.files || [];
-      pageToken = response.data.nextPageToken || undefined;
-
-      if (gFiles.length === 0) break;
-
-      const fileIds = gFiles.map((f) => f.id!).filter(Boolean);
-      const { data: existingFiles } = await supabaseAdmin
-        .from('files')
-        .select('google_drive_file_id')
-        .eq('drive_account_id', driveAccountId)
-        .in('google_drive_file_id', fileIds);
-
-      const existingIdSet = new Set((existingFiles || []).map((f) => f.google_drive_file_id));
-
+    while (currentList.length > 0) {
       const recordsToInsert = [];
-      for (const file of gFiles) {
+
+      for (const file of currentList) {
         if (!file.id || existingIdSet.has(file.id)) {
           continue;
         }
+
+        existingIdSet.add(file.id); // Hindari duplikasi dalam batch yang sama
 
         const fileName = file.name || 'Untitled';
         const extension = fileName.includes('.') ? fileName.split('.').pop() || null : null;
@@ -263,7 +263,7 @@ export async function syncGoogleDriveFiles(
           category,
           thumbnail_url: file.thumbnailLink || null,
           view_url: file.webViewLink || null,
-          download_url: file.webContentLink || null,
+          download_url: (file as any).webContentLink || null,
           is_favorite: false,
           is_trashed: false,
           created_at: file.createdTime ? new Date(file.createdTime).toISOString() : new Date().toISOString(),
@@ -282,9 +282,25 @@ export async function syncGoogleDriveFiles(
           totalSynced += recordsToInsert.length;
         }
       }
-    } while (pageToken && totalSynced < 500);
+
+      // Jika ada halaman berikutnya dan kuota sinkron masih belum melampaui batas
+      if (pageToken && totalSynced < 500) {
+        const nextRes: any = await drive.files.list({
+          pageSize: 250,
+          pageToken,
+          fields:
+            'nextPageToken, files(id, name, mimeType, size, createdTime, modifiedTime, thumbnailLink, webViewLink, webContentLink)',
+          q: "trashed = false and mimeType != 'application/vnd.google-apps.folder'",
+          orderBy: 'createdTime desc',
+        });
+        currentList = nextRes?.data?.files || [];
+        pageToken = nextRes?.data?.nextPageToken || undefined;
+      } else {
+        break;
+      }
+    }
   } catch (listErr: any) {
-    console.error('Google Drive sync error:', listErr?.message || listErr);
+    console.error('Google Drive fast sync error:', listErr?.message || listErr);
   }
 
   return { totalSynced };

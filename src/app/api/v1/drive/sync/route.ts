@@ -42,29 +42,30 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    let grandTotalSynced = 0;
-    const syncResults = [];
+    // Sinkronkan seluruh akun Google Drive secara PARALEL untuk kecepatan maksimal
+    const syncResults = await Promise.all(
+      accounts.map(async (acc) => {
+        try {
+          const { totalSynced } = await syncGoogleDriveFiles(acc.id, auth.userId);
+          return {
+            accountId: acc.id,
+            email: acc.google_email,
+            totalSynced,
+            success: true,
+          };
+        } catch (syncErr: any) {
+          return {
+            accountId: acc.id,
+            email: acc.google_email,
+            totalSynced: 0,
+            success: false,
+            error: syncErr.message,
+          };
+        }
+      })
+    );
 
-    for (const acc of accounts) {
-      try {
-        const { totalSynced } = await syncGoogleDriveFiles(acc.id, auth.userId);
-        grandTotalSynced += totalSynced;
-        syncResults.push({
-          accountId: acc.id,
-          email: acc.google_email,
-          totalSynced,
-          success: true,
-        });
-      } catch (syncErr: any) {
-        syncResults.push({
-          accountId: acc.id,
-          email: acc.google_email,
-          totalSynced: 0,
-          success: false,
-          error: syncErr.message,
-        });
-      }
-    }
+    const grandTotalSynced = syncResults.reduce((sum, r) => sum + r.totalSynced, 0);
 
     return NextResponse.json<ApiResponse>(
       {
