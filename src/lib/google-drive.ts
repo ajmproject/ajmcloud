@@ -1,10 +1,11 @@
 import { google } from 'googleapis';
 import { decryptToken, encryptToken } from './crypto';
 import { supabaseAdmin } from './supabase-admin';
+import { determineFileCategory } from './storage-router';
 
-// Scopes minimum: drive.file (hanya akses ke file yang diupload/dikelola AjmCloud) + email
+// Scope: Akses penuh ke Google Drive untuk membaca file yang sudah ada maupun menyimpan file baru
 export const GOOGLE_DRIVE_SCOPES = [
-  'https://www.googleapis.com/auth/drive.file',
+  'https://www.googleapis.com/auth/drive',
   'https://www.googleapis.com/auth/userinfo.email',
 ];
 
@@ -176,4 +177,118 @@ export async function createGoogleResumableSession(
   }
 
   return uploadUri;
+}
+
+/**
+ * Synchronizes files from the user's Google Drive account into AjmCloud's files table.
+ * Also synchronizes current storage quota (total and used bytes).
+ */
+export async function syncGoogleDriveFiles(
+  driveAccountId: string,
+  userId: string
+): Promise<{ totalSynced: number }> {
+  const accessToken = await getValidAccessToken(driveAccountId);
+  const oauth2Client = new google.auth.OAuth2();
+  oauth2Client.setCredentials({ access_token: accessToken });
+  const drive = google.drive({ version: 'v3', auth: oauth2Client });
+
+  // 1. Sync storage quota
+  try {
+    const aboutRes = await drive.about.get({ fields: 'storageQuota' });
+    const quota = aboutRes.data.storageQuota;
+    if (quota) {
+      const total = quota.limit ? Number(quota.limit) : 16106127360; // 15 GB default
+      const used = quota.usage ? Number(quota.usage) : 0;
+      await supabaseAdmin
+        .from('google_drive_accounts')
+        .update({
+          storage_total_bytes: total,
+          storage_used_bytes: used,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', driveAccountId);
+    }
+  } catch (quotaErr) {
+    console.warn('Failed to fetch Google Drive storage quota:', quotaErr);
+  }
+
+  // 2. Fetch non-trashed, non-folder files
+  let pageToken: string | undefined = undefined;
+  let totalSynced = 0;
+
+  try {
+    do {
+      const response: any = await drive.files.list({
+        pageSize: 100,
+        pageToken,
+        fields:
+          'nextPageToken, files(id, name, mimeType, size, createdTime, modifiedTime, thumbnailLink, webViewLink, webContentLink, iconLink)',
+        q: "trashed = false and mimeType != 'application/vnd.google-apps.folder'",
+        orderBy: 'createdTime desc',
+      });
+
+      const gFiles: any[] = response.data.files || [];
+      pageToken = response.data.nextPageToken || undefined;
+
+      if (gFiles.length === 0) break;
+
+      const fileIds = gFiles.map((f) => f.id!).filter(Boolean);
+      const { data: existingFiles } = await supabaseAdmin
+        .from('files')
+        .select('google_file_id')
+        .eq('google_drive_account_id', driveAccountId)
+        .in('google_file_id', fileIds);
+
+      const existingIdSet = new Set((existingFiles || []).map((f) => f.google_file_id));
+
+      const recordsToInsert = [];
+      for (const file of gFiles) {
+        if (!file.id || existingIdSet.has(file.id)) {
+          continue;
+        }
+
+        const fileName = file.name || 'Untitled';
+        const extension = fileName.includes('.') ? fileName.split('.').pop() || null : null;
+        const mimeType = file.mimeType || 'application/octet-stream';
+        const category = determineFileCategory(mimeType, extension);
+        const sizeBytes = file.size ? Number(file.size) : 0;
+
+        recordsToInsert.push({
+          user_id: userId,
+          google_drive_account_id: driveAccountId,
+          google_file_id: file.id,
+          name: fileName,
+          original_name: fileName,
+          mime_type: mimeType,
+          size_bytes: sizeBytes,
+          extension,
+          category,
+          thumbnail_url: file.thumbnailLink || null,
+          metadata: {
+            webViewLink: file.webViewLink || null,
+            webContentLink: file.webContentLink || null,
+            iconLink: file.iconLink || null,
+          },
+          created_at: file.createdTime ? new Date(file.createdTime).toISOString() : new Date().toISOString(),
+          updated_at: file.modifiedTime ? new Date(file.modifiedTime).toISOString() : new Date().toISOString(),
+        });
+      }
+
+      if (recordsToInsert.length > 0) {
+        const { error: insertErr } = await supabaseAdmin
+          .from('files')
+          .insert(recordsToInsert);
+
+        if (insertErr) {
+          console.error('Failed to insert synced files:', insertErr);
+        } else {
+          totalSynced += recordsToInsert.length;
+        }
+      }
+    } while (pageToken && totalSynced < 500);
+  } catch (listErr: any) {
+    console.error('Google Drive sync error:', listErr?.message || listErr);
+  }
+
+  return { totalSynced };
 }

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { exchangeCodeForTokens } from '@/lib/google-drive';
+import { exchangeCodeForTokens, syncGoogleDriveFiles } from '@/lib/google-drive';
 import { encryptToken } from '@/lib/crypto';
 import { supabaseAdmin } from '@/lib/supabase-admin';
 import { ApiResponse } from '@/types';
@@ -68,6 +68,13 @@ export async function GET(request: NextRequest) {
 
     if (dbError) {
       throw new Error(`Failed to save Google Drive account: ${dbError.message}`);
+    }
+
+    // Automatically trigger initial sync of existing files from Google Drive
+    try {
+      await syncGoogleDriveFiles(driveAccount.id, stateData.userId);
+    } catch (syncErr) {
+      console.warn('Initial background sync warning:', syncErr);
     }
 
     // Return HTML success response (or redirect) for browser/web view
