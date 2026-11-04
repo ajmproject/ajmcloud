@@ -74,19 +74,17 @@ export async function POST(request: NextRequest) {
       .from('files')
       .insert({
         user_id: auth.userId,
-        google_drive_account_id: job.google_drive_account_id,
-        google_file_id: gFile.id,
+        drive_account_id: job.google_drive_account_id,
+        google_drive_file_id: gFile.id,
         name: fileName,
-        original_name: job.file_name,
         mime_type: job.mime_type,
         size_bytes: finalSize,
-        extension,
         category,
         thumbnail_url: gFile.thumbnailLink || null,
-        metadata: {
-          webViewLink: gFile.webViewLink,
-          createdTime: gFile.createdTime,
-        },
+        view_url: gFile.webViewLink || null,
+        download_url: (gFile as any).webContentLink || null,
+        is_favorite: false,
+        is_trashed: false,
       })
       .select('*')
       .single();

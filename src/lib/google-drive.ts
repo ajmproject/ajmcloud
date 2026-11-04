@@ -235,11 +235,11 @@ export async function syncGoogleDriveFiles(
       const fileIds = gFiles.map((f) => f.id!).filter(Boolean);
       const { data: existingFiles } = await supabaseAdmin
         .from('files')
-        .select('google_file_id')
-        .eq('google_drive_account_id', driveAccountId)
-        .in('google_file_id', fileIds);
+        .select('google_drive_file_id')
+        .eq('drive_account_id', driveAccountId)
+        .in('google_drive_file_id', fileIds);
 
-      const existingIdSet = new Set((existingFiles || []).map((f) => f.google_file_id));
+      const existingIdSet = new Set((existingFiles || []).map((f) => f.google_drive_file_id));
 
       const recordsToInsert = [];
       for (const file of gFiles) {
@@ -255,20 +255,17 @@ export async function syncGoogleDriveFiles(
 
         recordsToInsert.push({
           user_id: userId,
-          google_drive_account_id: driveAccountId,
-          google_file_id: file.id,
+          drive_account_id: driveAccountId,
+          google_drive_file_id: file.id,
           name: fileName,
-          original_name: fileName,
           mime_type: mimeType,
           size_bytes: sizeBytes,
-          extension,
           category,
           thumbnail_url: file.thumbnailLink || null,
-          metadata: {
-            webViewLink: file.webViewLink || null,
-            webContentLink: file.webContentLink || null,
-            iconLink: file.iconLink || null,
-          },
+          view_url: file.webViewLink || null,
+          download_url: file.webContentLink || null,
+          is_favorite: false,
+          is_trashed: false,
           created_at: file.createdTime ? new Date(file.createdTime).toISOString() : new Date().toISOString(),
           updated_at: file.modifiedTime ? new Date(file.modifiedTime).toISOString() : new Date().toISOString(),
         });

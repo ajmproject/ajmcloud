@@ -30,6 +30,33 @@ export async function GET(request: NextRequest) {
       { totalBytes: 0, usedBytes: 0 }
     );
 
+    // Calculate category breakdown from files table
+    const { data: userFiles } = await supabaseAdmin
+      .from('files')
+      .select('category, size_bytes')
+      .eq('user_id', auth.userId)
+      .eq('is_trashed', false);
+
+    const categoryUsage = {
+      mediaBytes: 0,
+      documentBytes: 0,
+      archiveBytes: 0,
+      otherBytes: 0,
+    };
+
+    for (const f of userFiles || []) {
+      const bytes = Number(f.size_bytes || 0);
+      if (f.category === 'photo' || f.category === 'video') {
+        categoryUsage.mediaBytes += bytes;
+      } else if (f.category === 'document') {
+        categoryUsage.documentBytes += bytes;
+      } else if (f.category === 'archive') {
+        categoryUsage.archiveBytes += bytes;
+      } else {
+        categoryUsage.otherBytes += bytes;
+      }
+    }
+
     return NextResponse.json<ApiResponse>({
       success: true,
       data: {
@@ -41,6 +68,7 @@ export async function GET(request: NextRequest) {
           totalAccounts: (accounts || []).length,
           activeAccounts: (accounts || []).filter((a) => a.is_active && a.status === 'connected').length,
         },
+        categoryUsage,
       },
     });
   } catch (error: any) {
