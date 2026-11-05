@@ -15,27 +15,38 @@ export async function GET(request: NextRequest) {
   try {
     const auth = await authenticateRequest(request, { requireActive: true });
 
-    // 1. Fetch custom user albums from 'albums' table
-    const { data: customAlbums, error: albumError } = await supabaseAdmin
-      .from('albums')
-      .select(`
-        id,
-        title,
-        description,
-        cover_file_id,
-        created_at,
-        updated_at
-      `)
-      .eq('user_id', auth.userId)
-      .order('created_at', { ascending: false });
+    // 1. Fetch custom user albums & all user files in PARALLEL in a single round-trip
+    const [customAlbumsRes, userFilesRes] = await Promise.all([
+      supabaseAdmin
+        .from('albums')
+        .select(`
+          id,
+          title,
+          description,
+          cover_file_id,
+          created_at,
+          updated_at
+        `)
+        .eq('user_id', auth.userId)
+        .order('created_at', { ascending: false }),
+      supabaseAdmin
+        .from('files')
+        .select('id, name, category, thumbnail_url, view_url, is_favorite, created_at')
+        .eq('user_id', auth.userId)
+        .eq('is_trashed', false)
+        .order('created_at', { ascending: false }),
+    ]);
 
-    if (albumError) {
-      throw new Error(`Gagal memuat album: ${albumError.message}`);
+    if (customAlbumsRes.error) {
+      throw new Error(`Gagal memuat album: ${customAlbumsRes.error.message}`);
     }
 
-    // 2. Fetch cover photos & count for custom albums
+    const customAlbums = customAlbumsRes.data || [];
+    const allFiles = userFilesRes.data || [];
+
+    // 2. Enrich custom albums (if any)
     const enrichedCustomAlbums = await Promise.all(
-      (customAlbums || []).map(async (alb) => {
+      customAlbums.map(async (alb) => {
         const { count } = await supabaseAdmin
           .from('album_items')
           .select('*', { count: 'exact', head: true })
@@ -43,12 +54,8 @@ export async function GET(request: NextRequest) {
 
         let coverUrl: string | null = null;
         if (alb.cover_file_id) {
-          const { data: coverFile } = await supabaseAdmin
-            .from('files')
-            .select('thumbnail_url, view_url')
-            .eq('id', alb.cover_file_id)
-            .single();
-          coverUrl = coverFile?.thumbnail_url || coverFile?.view_url || null;
+          const match = allFiles.find((f) => f.id === alb.cover_file_id);
+          coverUrl = match?.thumbnail_url || match?.view_url || null;
         }
 
         return {
@@ -64,114 +71,60 @@ export async function GET(request: NextRequest) {
       })
     );
 
-    // 3. Generate Smart Albums from user's real files in Google Drive
-    const { data: photos, count: photoCount } = await supabaseAdmin
-      .from('files')
-      .select('id, thumbnail_url, view_url, created_at', { count: 'exact' })
-      .eq('user_id', auth.userId)
-      .eq('category', 'photo')
-      .eq('is_trashed', false)
-      .order('created_at', { ascending: false })
-      .limit(1);
+    // 3. Generate Smart Albums in-memory instantly (0 extra database queries)
+    const photos = allFiles.filter((f) => f.category === 'photo');
+    const videos = allFiles.filter((f) => f.category === 'video');
+    const documents = allFiles.filter((f) => f.category === 'document');
+    const archives = allFiles.filter((f) => f.category === 'archive');
+    const favorites = allFiles.filter((f) => f.is_favorite);
 
-    const { data: videos, count: videoCount } = await supabaseAdmin
-      .from('files')
-      .select('id, thumbnail_url, view_url, created_at', { count: 'exact' })
-      .eq('user_id', auth.userId)
-      .eq('category', 'video')
-      .eq('is_trashed', false)
-      .order('created_at', { ascending: false })
-      .limit(1);
-
-    const { data: documents, count: docCount } = await supabaseAdmin
-      .from('files')
-      .select('id, thumbnail_url, view_url, created_at', { count: 'exact' })
-      .eq('user_id', auth.userId)
-      .eq('category', 'document')
-      .eq('is_trashed', false)
-      .order('created_at', { ascending: false })
-      .limit(1);
-
-    const { data: archives, count: arcCount } = await supabaseAdmin
-      .from('files')
-      .select('id, thumbnail_url, view_url, created_at', { count: 'exact' })
-      .eq('user_id', auth.userId)
-      .eq('category', 'archive')
-      .eq('is_trashed', false)
-      .order('created_at', { ascending: false })
-      .limit(1);
-
-    const { data: favorites, count: favCount } = await supabaseAdmin
-      .from('files')
-      .select('id, thumbnail_url, view_url, created_at', { count: 'exact' })
-      .eq('user_id', auth.userId)
-      .eq('is_favorite', true)
-      .eq('is_trashed', false)
-      .order('created_at', { ascending: false })
-      .limit(1);
-
-    const smartAlbums = [];
-
-    // Tampilkan smart albums yang memiliki file
-    if ((photoCount || 0) > 0) {
-      smartAlbums.push({
+    const smartAlbums = [
+      {
         id: 'smart-photos',
         title: 'Semua Foto',
         description: 'Seluruh foto dari Google Drive Anda',
-        itemCount: photoCount || 0,
-        coverUrl: photos?.[0]?.thumbnail_url || photos?.[0]?.view_url || null,
+        itemCount: photos.length,
+        coverUrl: photos[0]?.thumbnail_url || photos[0]?.view_url || null,
         isSmart: true,
         type: 'photo',
-      });
-    }
-
-    if ((videoCount || 0) > 0) {
-      smartAlbums.push({
+      },
+      {
         id: 'smart-videos',
         title: 'Koleksi Video',
         description: 'Video kenangan dari Google Drive',
-        itemCount: videoCount || 0,
-        coverUrl: videos?.[0]?.thumbnail_url || videos?.[0]?.view_url || null,
+        itemCount: videos.length,
+        coverUrl: videos[0]?.thumbnail_url || videos[0]?.view_url || null,
         isSmart: true,
         type: 'video',
-      });
-    }
-
-    if ((docCount || 0) > 0) {
-      smartAlbums.push({
+      },
+      {
         id: 'smart-docs',
         title: 'Dokumen',
         description: 'Kumpulan dokumen & PDF',
-        itemCount: docCount || 0,
-        coverUrl: documents?.[0]?.thumbnail_url || null,
+        itemCount: documents.length,
+        coverUrl: documents[0]?.thumbnail_url || null,
         isSmart: true,
         type: 'document',
-      });
-    }
-
-    if ((arcCount || 0) > 0) {
-      smartAlbums.push({
+      },
+      {
         id: 'smart-archives',
         title: 'Arsip & Berkas',
         description: 'File ZIP, RAR, dan berkas arsip',
-        itemCount: arcCount || 0,
-        coverUrl: archives?.[0]?.thumbnail_url || null,
+        itemCount: archives.length,
+        coverUrl: archives[0]?.thumbnail_url || null,
         isSmart: true,
         type: 'archive',
-      });
-    }
-
-    if ((favCount || 0) > 0) {
-      smartAlbums.push({
+      },
+      {
         id: 'smart-favorites',
         title: 'Favorit',
         description: 'File yang Anda tandai sebagai favorit',
-        itemCount: favCount || 0,
-        coverUrl: favorites?.[0]?.thumbnail_url || favorites?.[0]?.view_url || null,
+        itemCount: favorites.length,
+        coverUrl: favorites[0]?.thumbnail_url || favorites[0]?.view_url || null,
         isSmart: true,
         type: 'favorite',
-      });
-    }
+      },
+    ];
 
     return NextResponse.json<ApiResponse>({
       success: true,
